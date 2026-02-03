@@ -640,7 +640,11 @@ async def handle_referral_reward(session, referrer_id: int, referred_id: int, bo
         return
 
     # Check if referred user is subscribed
-    if not await check_subscription(bot, referred_id):
+    if not await check_subscription(referred_id, bot):
+        return
+
+    # Check if referrer is subscribed before giving reward
+    if not await check_subscription(referrer_id, bot):
         return
 
     # Add referral record
@@ -659,23 +663,19 @@ async def handle_referral_reward(session, referrer_id: int, referred_id: int, bo
     
     # Check if referrer is subscribed before giving reward
     if referrer:
-        if await check_subscription(referrer_id, bot):
-            referrer.balance += settings.referral_reward
-            referrer.referral_count += 1
-            
-            # Notify referrer
-            try:
-                await bot.send_message(
-                    referrer_id,
-                    f"🎉 Tabriklayman! Yangi referal keldi!\n"
-                    f"💰 Balansingiz {settings.referral_reward} so'm ko'paydi.\n"
-                    f"📊 Jami balans: {format_balance(referrer.balance)} so'm"
-                )
-            except TelegramAPIError:
-                pass
-        else:
-            # Send warning to referrer
-            await send_subscription_warning(referrer_id, bot)
+        referrer.balance += settings.referral_reward
+        referrer.referral_count += 1
+        
+        # Notify referrer
+        try:
+            await bot.send_message(
+                referrer_id,
+                f"🎉 Tabriklayman! Yangi referal keldi!\n"
+                f"💰 Balansingiz {settings.referral_reward} so'm ko'paydi.\n"
+                f"📊 Jami balans: {format_balance(referrer.balance)} so'm"
+            )
+        except TelegramAPIError:
+            pass
             
             # Notify admin
             try:
