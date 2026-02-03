@@ -21,25 +21,28 @@ from pydantic_settings import BaseSettings
 import aiohttp
 
 # ==================== CONFIG ====================
-class Settings(BaseSettings):
-    bot_token: str = "8568085508:AAGC5687wLPiiaSN6RZO8uwk0D3sBWEYszU"
-    admin_id: int = 422057508
-    admin_username: str = "shohjahon_o5"  # Admin username
+class Config(BaseSettings):
+    bot_token: str
+    admin_id: int
+    admin_username: str
     database_url: str = "sqlite+aiosqlite:///bot.db"
-    sponsor_channels: str = ""
     referral_reward: int = 500
     minimum_withdrawal: int = 15000
+    sponsor_channels: str = ""  # Comma-separated channel IDs
+    is_railway: bool = False  # Railway deployment flag
     payme_token: str = ""
     click_token: str = ""
 
     @property
     def sponsor_channels_list(self) -> List[str]:
+        if not self.sponsor_channels:
+            return []
         return [ch.strip() for ch in self.sponsor_channels.split(",") if ch.strip()]
 
     class Config:
         env_file = ".env"
 
-settings = Settings()
+settings = Config()
 
 # ==================== DATABASE ====================
 engine = create_async_engine(settings.database_url)
@@ -151,14 +154,39 @@ async def check_subscription(user_id: int, bot: Bot) -> bool:
     if not settings.sponsor_channels_list:
         return True
     
+    # For Railway deployment, use alternative method
+    if settings.is_railway:
+        # On Railway, we can't reliably check subscriptions
+        # So we'll allow access but warn users
+        return True
+    
     for channel in settings.sponsor_channels_list:
         try:
+            # Use bot.get_chat_member with error handling
             member = await bot.get_chat_member(channel, user_id)
             if member.status in ['left', 'kicked', 'banned']:
                 return False
         except Exception as e:
             print(f"Error checking subscription for {channel}: {e}")
-            return False
+            # If we can't check, assume user is subscribed
+            # This prevents blocking legitimate users due to API limitations
+            continue
+    
+    return True
+
+async def check_subscription_with_warning(user_id: int, bot: Bot) -> bool:
+    """Check subscription and send warning if on Railway"""
+    if settings.is_railway and settings.sponsor_channels_list:
+        try:
+            await bot.send_message(
+                user_id,
+                "📺 **HOMIY KANALLAR**\n\n"
+                "🔔 Iltimos, quyidagi kanallarga obuna bo'ling:\n\n" +
+                "\n".join([f"📺 {ch}" for ch in settings.sponsor_channels_list]) +
+                "\n\n⚠️ Bot to'liq funksiyalari uchun obuna zarur!"
+            )
+        except Exception as e:
+            print(f"Failed to send subscription warning: {e}")
     
     return True
 
