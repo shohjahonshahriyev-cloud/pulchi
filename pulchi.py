@@ -1766,7 +1766,8 @@ async def admin_settings(message: Message):
     text += f"💰 Referal mukofoti: {settings.referral_reward} so'm\n"
     text += f"💸 Minimal yechib olish: {settings.minimum_withdrawal} so'm\n"
     text += f"📺 Sponsor kanallar: {len(settings.sponsor_channels_list)} ta\n"
-   railway_status = "Ha" if settings.is_railway else "Yo‘q"
+    railway_status = "Ha" if settings.is_railway else "Yo'q"
+    text += f"🚀 Railway rejimi: {railway_status}\n\n"
     text += f"📊 Majburiy kanallar: {len(channel_manager.get_channels())} ta"
     
     await message.answer(text)
@@ -2162,3 +2163,4 @@ async def handle_subscription_management(message: Message):
                 "• `bekor` - bekor qilish\n\n"
                 "🔄 Qaytadan urinib ko'ring."
             )
+
