@@ -29,7 +29,7 @@ class Config(BaseSettings):
     referral_reward: int = 500
     minimum_withdrawal: int = 15000
     sponsor_channels: str = "@shohjahon_shahriyev"  # Comma-separated channel IDs
-    is_railway: bool = True  # Railway deployment flag
+    is_railway: bool = False  # Railway deployment flag
     payme_token: str = ""
     click_token: str = ""
 
@@ -135,8 +135,20 @@ def main_menu():
     return keyboard
 
 def restricted_menu():
+    # Avval ChannelManager dan kanallarni olamiz
+    channels = channel_manager.get_channels()
+    if channels:
+        channel = channels[0]
+        channel_url = f"https://t.me/{channel['username'].lstrip('@')}"
+    else:
+        # Agar ChannelManager da kanallar bo'lmasa, settings dan olamiz
+        if settings.sponsor_channels_list:
+            channel_url = f"https://t.me/{settings.sponsor_channels_list[0].lstrip('@')}"
+        else:
+            channel_url = "#"
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=" Obuna bo'lish ✅", url=f"https://t.me/{settings.sponsor_channels_list[0].lstrip('@')}" if settings.sponsor_channels_list else "#")],
+        [InlineKeyboardButton(text=" Obuna bo'lish ✅", url=channel_url)],
         [InlineKeyboardButton(text=" Obunani tekshirish 🔍", callback_data="check_subscription")]
     ])
     return keyboard
@@ -144,9 +156,9 @@ def restricted_menu():
 def admin_menu():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="👥 Foydalanuvchilar"), KeyboardButton(text="💰 Balanslarni boshqarish")],
-            [KeyboardButton(text="📋 To'lov so'rovlari"), KeyboardButton(text="📺 Homiy kanallar")],
-            [KeyboardButton(text="⚙️ Sozlamalar"), KeyboardButton(text="📊 Statistika")]
+            [KeyboardButton(text="👥 Foydalanuvchilar"), KeyboardButton(text="💰 Balansni o'zgartirish")],
+            [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="⚙️ Sozlamalar")],
+            [KeyboardButton(text="📢 Xabar yuborish")]
         ],
         resize_keyboard=True
     )
@@ -167,29 +179,162 @@ def withdrawal_methods():
 
 def sponsor_channels():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-    for channel in settings.sponsor_channels_list:
-        keyboard.inline_keyboard.append([
-            InlineKeyboardButton(text=f"📺 {channel}", url=f"https://t.me/{channel.lstrip('@')}")
-        ])
+    # Avval ChannelManager dan kanallarni olamiz
+    channels = channel_manager.get_channels()
+    if channels:
+        for channel in channels:
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(text=f"📺 {channel['name']}", url=f"https://t.me/{channel['username'].lstrip('@')}")
+            ])
+    else:
+        # Agar ChannelManager da kanallar bo'lmasa, settings dan olamiz
+        for channel in settings.sponsor_channels_list:
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(text=f"📺 {channel}", url=f"https://t.me/{channel.lstrip('@')}")
+            ])
     return keyboard
+
+# ==================== CHANNEL MANAGER ====================
+class ChannelManager:
+    """Majburiy obuna kanallarini boshqarish uchun klass"""
+    
+    def __init__(self):
+        self.channels = []
+        self.channels_file = "data/channels.json"
+        self.load_channels()
+    
+    def load_channels(self):
+        """Kanallarni fayldan yuklash"""
+        try:
+            import os
+            import json
+            print(f"DEBUG: Kanallar fayli yo'li: {self.channels_file}")
+            if os.path.exists(self.channels_file):
+                with open(self.channels_file, 'r', encoding='utf-8') as f:
+                    self.channels = json.load(f)
+                print(f"DEBUG: Yuklangan kanallar: {self.channels}")
+            else:
+                print(f"DEBUG: Kanallar fayli topilmadi: {self.channels_file}")
+                self.channels = []
+        except Exception as e:
+            print(f"❌ Kanallarni yuklashda xatolik: {e}")
+            self.channels = []
+    
+    def save_channels(self):
+        """Kanallarni faylga saqlash"""
+        try:
+            import os
+            import json
+            os.makedirs(os.path.dirname(self.channels_file), exist_ok=True)
+            with open(self.channels_file, 'w', encoding='utf-8') as f:
+                json.dump(self.channels, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"❌ Kanallarni saqlashda xatolik: {e}")
+    
+    def add_channel(self, channel_id: str, channel_name: str = None):
+        """Yangi kanal qo'shish (faqat 1 ta kanal mumkin)"""
+        # Agar allaqachon kanal bo'lsa, yangisini qo'shmaslik
+        if len(self.channels) >= 1:
+            return False
+        
+        # Kanal ID dan username ni ajratib olish
+        username = channel_id
+        if not username.startswith('@'):
+            username = f"@{username}"
+        
+        channel_info = {
+            'id': channel_id,
+            'username': username,  # username ni qo'shish
+            'name': channel_name or channel_id,
+            'added_date': datetime.now().isoformat()
+        }
+        
+        # Takrorlanishni tekshirish
+        for channel in self.channels:
+            if channel['id'] == channel_id:
+                return False
+        
+        self.channels.append(channel_info)
+        self.save_channels()
+        return True
+    
+    def remove_channel(self, channel_id: str):
+        """Kanalni o'chirish"""
+        self.channels = [ch for ch in self.channels if ch['id'] != channel_id]
+        self.save_channels()
+        return True
+    
+    def get_channels(self) -> list:
+        """Barcha kanallarni olish"""
+        return self.channels.copy()
+    
+    async def check_subscription(self, user_id: int, bot: Bot) -> bool:
+        """Foydalanuvchining barcha kanallarga obuna bo'lganini tekshirish"""
+        print(f"DEBUG: check_subscription chaqirildi, user_id: {user_id}")
+        print(f"DEBUG: Kanallar ro'yxati: {self.channels}")
+        
+        if not self.channels:
+            print("DEBUG: Kanallar yo'q, True qaytaramiz")
+            return True
+        
+        for channel in self.channels:
+            try:
+                # Kanal username ni to'g'ri formatga keltirish
+                channel_username = channel['username']
+                print(f"DEBUG: Tekshirilayotgan kanal: {channel_username}")
+                
+                if not channel_username.startswith('@'):
+                    channel_username = f"@{channel_username}"  # @ belgisini qo'shish
+                    print(f"DEBUG: Qo'shilgan @: {channel_username}")
+                
+                print(f"DEBUG: {channel_username} kanalida {user_id} obunasini tekshirish")
+                member = await bot.get_chat_member(channel_username, user_id)
+                print(f"DEBUG: User status: {member.status}")
+                
+                if member.status not in ['member', 'administrator', 'creator']:
+                    print(f"DEBUG: User {user_id} obuna bo'lmagan, status: {member.status}")
+                    return False
+                else:
+                    print(f"DEBUG: User {user_id} obuna bo'lgan")
+            except Exception as e:
+                # Agar kanal topilmasa yoki bot kanalda admin bo'lmasa, bu kanalni o'tkazib yuborish
+                print(f"DEBUG: Kanal tekshiruvi xatoligi: {e}")
+                continue
+        
+        print(f"DEBUG: Barcha kanallar uchun obuna tasdiqlandi")
+        return True
+
+# Global channel manager
+channel_manager = ChannelManager()
 
 # ==================== UTILS ====================
 async def check_subscription(user_id: int, bot: Bot) -> bool:
     """Check if user is subscribed to all sponsor channels"""
+    # Avval ChannelManager dan tekshiramiz
+    channels = channel_manager.get_channels()
+    if channels:
+        print(f"DEBUG: ChannelManager dan {len(channels)} ta kanal topildi")
+        return await channel_manager.check_subscription(user_id, bot)
+    
+    # Agar ChannelManager da kanallar bo'lmasa, settings dan tekshiramiz
     if not settings.sponsor_channels_list:
+        print("DEBUG: Hech qanday kanal sozlanmagan")
         return True
     
     # For Railway deployment, use alternative method
     if settings.is_railway:
+        print("DEBUG: Railway rejimida obuna tekshirish o'chirilgan")
         # On Railway, we can't reliably check subscriptions
         # So we'll allow access but warn users
         return True
     
+    print(f"DEBUG: Settings dan {len(settings.sponsor_channels_list)} ta kanal tekshirilmoqda")
     for channel in settings.sponsor_channels_list:
         try:
             # Use bot.get_chat_member with error handling
             member = await bot.get_chat_member(channel, user_id)
             if member.status in ['left', 'kicked', 'banned']:
+                print(f"DEBUG: User {user_id} {channel} kanaliga obuna bo'lmagan")
                 return False
         except Exception as e:
             print(f"Error checking subscription for {channel}: {e}")
@@ -197,6 +342,7 @@ async def check_subscription(user_id: int, bot: Bot) -> bool:
             # This prevents blocking legitimate users due to API limitations
             continue
     
+    print(f"DEBUG: User {user_id} barcha kanallarga obuna bo'lgan")
     return True
 
 async def check_subscription_with_warning(user_id: int, bot: Bot) -> bool:
@@ -693,6 +839,70 @@ async def contact_admin(message: Message):
         "📝 Yoki admin ga shaxsiy xabar yuboring:",
         reply_markup=keyboard
     )
+
+@dp.message(F.text.regexp(r'^\d+ [+-]\d+$'))
+async def process_balance_change(message: Message):
+    if message.from_user.id != settings.admin_id:
+        return
+
+    try:
+        print(f"DEBUG: Balance change request: '{message.text}'")
+        parts = message.text.split()
+        user_id = int(parts[0])
+        change_amount = int(parts[1])  # +5000 yoki -3000
+        
+        print(f"DEBUG: Processing balance change - User: {user_id}, Amount: {change_amount}")
+        
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(User).where(User.telegram_id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if not user:
+                await message.answer(f"❌ Foydalanuvchi topilmadi: {user_id}")
+                return
+            
+            old_balance = user.balance
+            user.balance += change_amount
+            await session.commit()
+            
+            print(f"DEBUG: Balance updated - Old: {old_balance}, New: {user.balance}")
+            
+            # Notify user about balance change
+            try:
+                await message.bot.send_message(
+                    user_id,
+                    f"💰 Balansingiz o'zgartirildi!\n\n"
+                    f"Oldingi balans: {format_balance(old_balance)} so'm\n"
+                    f"Yangi balans: {format_balance(user.balance)} so'm\n"
+                    f"O'zgarish: {'+' if change_amount > 0 else ''}{format_balance(change_amount)} so'm"
+                )
+                print(f"DEBUG: User notification sent to {user_id}")
+            except Exception as e:
+                print(f"DEBUG: Failed to notify user: {e}")
+            
+            await message.answer(
+                f"✅ Balans muvaffaqiyatli o'zgartirildi!\n\n"
+                f"👤 Foydalanuvchi: {user.first_name} (@{user.username or 'none'})\n"
+                f"🆔 ID: {user_id}\n"
+                f"💰 Oldingi balans: {format_balance(old_balance)} so'm\n"
+                f"💰 Yangi balans: {format_balance(user.balance)} so'm\n"
+                f"📈 O'zgarish: {'+' if change_amount > 0 else ''}{format_balance(change_amount)} so'm"
+            )
+            print(f"DEBUG: Admin confirmation sent")
+            
+    except (ValueError, IndexError) as e:
+        print(f"DEBUG: Error in balance change: {e}")
+        await message.answer(
+            "❌ Noto'g'ri format!\n\n"
+            "To'g'ri format:\n"
+            "123456789 +5000\n"
+            "123456789 -3000"
+        )
+    except Exception as e:
+        print(f"DEBUG: Unexpected error: {e}")
+        await message.answer(f"❌ Xatolik yuz berdi: {e}")
 
 @dp.message(Command("check_all"))
 async def check_all_subscriptions(message: Message):
@@ -1233,52 +1443,6 @@ async def admin_panel(message: Message):
     
     await message.answer(admin_text, reply_markup=admin_menu())
 
-@dp.message(F.text == "👥 Foydalanuvchilar")
-async def admin_users(message: Message):
-    if message.from_user.id != settings.admin_id:
-        return
-
-    async with async_session_maker() as session:
-        result = await session.execute(
-            select(User).order_by(User.created_at.desc()).limit(20)
-        )
-        users = result.scalars().all()
-
-        text = "👥 Oxirgi foydalanuvchilar:\n\n"
-        
-        for user in users:
-            # Escape special characters for markdown
-            name = (user.first_name or "Noma'lum").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
-            username = (user.username or "none").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
-            
-            text += f"• {name} (@{username})\n"
-            text += f"  🆔 ID: `{user.telegram_id}`\n"
-            text += f"  💰 Balans: {format_balance(user.balance)} so'm\n"
-            text += f"  👥 Referallar: {user.referral_count} ta\n\n"
-
-        text += "💡 **ID larni nusxalash uchun ustiga bosing!**\n\n"
-        text += "🔧 **Balans boshqarish uchun:**\n"
-        text += "`USER_ID +MIQDOR` yoki `USER_ID -MIQDOR`\n\n"
-        text += "📝 **Masalan:**\n"
-        text += "`123456789 +1000`"
-
-        await message.answer(text, parse_mode="Markdown")
-
-@dp.message(F.text == "💰 Balanslarni boshqarish")
-async def admin_balance_management(message: Message):
-    if message.from_user.id != settings.admin_id:
-        return
-
-    await message.answer(
-        "💰 Balans boshqarish:\n\n"
-        "Foydalanuvchi ID va miqdorni kiriting:\n\n"
-        "Masalan:\n"
-        "123456789 +5000 (balansni oshirish)\n"
-        "123456789 -3000 (balansni kamaytirish)\n\n"
-        "Yoki foydalanuvchi ro'yxatini ko'rish uchun:\n"
-        "/users"
-    )
-
 # Balance management handler
 @dp.message(F.text.regexp(r'^\d+ [+-]\d+$'))
 async def process_balance_change(message: Message):
@@ -1510,43 +1674,45 @@ async def save_to_env(key: str, value: str):
     # Write back to file
     env_file.write_text('\n'.join(lines), encoding='utf-8')
 
-@dp.message(F.text == "⚙️ Sozlamalar")
-async def admin_settings(message: Message):
-    if message.from_user.id != settings.admin_id:
-        return
-
-    text = "⚙️ Bot sozlamalari:\n\n"
-    text += f"🎁 Referal mukofoti: {settings.referral_reward} so'm\n"
-    text += f"💸 Minimal yechib olish: {settings.minimum_withdrawal} so'm\n"
-    text += f"📺 Homiy kanallar: {len(settings.sponsor_channels_list)} ta\n"
-    text += f"👨‍💼 Admin ID: {settings.admin_id}\n"
-    
-    await message.answer(text)
-
-@dp.message(F.text == "📋 To'lov so'rovlari")
-async def admin_withdrawals(message: Message):
+@dp.message(F.text == "👥 Foydalanuvchilar")
+async def admin_users_list(message: Message):
     if message.from_user.id != settings.admin_id:
         return
 
     async with async_session_maker() as session:
         result = await session.execute(
-            select(Withdrawal).where(Withdrawal.status == "pending").order_by(Withdrawal.created_at.desc())
+            select(User).order_by(User.created_at.desc()).limit(10)
         )
-        withdrawals = result.scalars().all()
+        users = result.scalars().all()
 
-        if not withdrawals:
-            await message.answer("📋 Kutilayotgan to'lov so'rovlari yo'q.")
+        if not users:
+            await message.answer("👥 Foydalanuvchilar yo'q!")
             return
 
-        text = "📋 To'lov so'rovlari:\n\n"
-        for withdrawal in withdrawals:
-            text += f"ID: {withdrawal.id}\n"
-            text += f"User ID: {withdrawal.user_id}\n"
-            text += f"Miqdor: {format_balance(withdrawal.amount)} so'm\n"
-            text += f"Usul: {withdrawal.payment_method}\n"
-            text += f"Status: {withdrawal.status}\n\n"
+        text = "👥 Oxirgi 10 foydalanuvchi:\n\n"
+        for i, user in enumerate(users, 1):
+            text += f"{i}. {user.first_name} (@{user.username or 'none'})\n"
+            text += f"   🆔 ID: {user.telegram_id}\n"
+            text += f"   💰 Balans: {format_balance(user.balance)} so'm\n"
+            text += f"   👥 Referallar: {user.referral_count} ta\n\n"
 
         await message.answer(text)
+
+@dp.message(F.text == "💰 Balansni o'zgartirish")
+async def admin_balance_change(message: Message):
+    if message.from_user.id != settings.admin_id:
+        return
+    
+    await message.answer(
+        "💰 Balansni o'zgartirish:\n\n"
+        "Format: `user_id +/-summa`\n\n"
+        "Masalan:\n"
+        "123456789 +5000\n"
+        "123456789 -3000\n\n"
+        "user_id - foydalanuvchi Telegram ID\n"
+        "+5000 - balansga 5000 so'm qo'shish\n"
+        "-3000 - balansdan 3000 so'm ayirish"
+    )
 
 @dp.message(F.text == "📊 Statistika")
 async def admin_statistics(message: Message):
@@ -1554,6 +1720,92 @@ async def admin_statistics(message: Message):
         return
 
     async with async_session_maker() as session:
+        # Get user count
+        user_count_result = await session.execute(select(func.count(User.id)))
+        user_count = user_count_result.scalar()
+
+        # Get total balance
+        balance_result = await session.execute(select(func.sum(User.balance)))
+        total_balance = balance_result.scalar() or 0
+
+        # Get withdrawal stats
+        pending_result = await session.execute(
+            select(func.count(Withdrawal.id)).filter(Withdrawal.status == "pending")
+        )
+        pending_count = pending_result.scalar() or 0
+
+        approved_result = await session.execute(
+            select(func.count(Withdrawal.id)).filter(Withdrawal.status == "approved")
+        )
+        approved_count = approved_result.scalar() or 0
+
+        rejected_result = await session.execute(
+            select(func.count(Withdrawal.id)).filter(Withdrawal.status == "rejected")
+        )
+        rejected_count = rejected_result.scalar() or 0
+
+        text = f"📊 **Bot statistikasi:**\n\n"
+        text += f"�� Jami foydalanuvchilar: {user_count} ta\n"
+        text += f"💰 Jami balans: {format_balance(total_balance)} so'm\n"
+        text += f"📋 Kutilayotgan to'lovlar: {pending_count} ta\n"
+        text += f"✅ Tasdiqlangan to'lovlar: {approved_count} ta\n"
+        text += f"❌ Rad etilgan to'lovlar: {rejected_count} ta\n\n"
+        text += f"💸 Minimal yechib olish: {format_balance(settings.minimum_withdrawal)} so'm\n"
+        text += f"🎁 Referal mukofoti: {format_balance(settings.referral_reward)} so'm"
+
+        await message.answer(text)
+
+@dp.message(F.text == "⚙️ Sozlamalar")
+async def admin_settings(message: Message):
+    if message.from_user.id != settings.admin_id:
+        return
+    
+    text = f"⚙️ Bot sozlamalari:\n\n"
+    text += f"🤖 Admin: @{settings.admin_username}\n"
+    text += f"🆔 Admin ID: {settings.admin_id}\n"
+    text += f"💰 Referal mukofoti: {settings.referral_reward} so'm\n"
+    text += f"💸 Minimal yechib olish: {settings.minimum_withdrawal} so'm\n"
+    text += f"📺 Sponsor kanallar: {len(settings.sponsor_channels_list)} ta\n"
+    text += f"🚀 Railway rejimi: {'Ha' if settings.is_railway else 'Yo\'q'}\n\n"
+    text += f"📊 Majburiy kanallar: {len(channel_manager.get_channels())} ta"
+    
+    await message.answer(text)
+
+@dp.message(F.text == "📢 Xabar yuborish")
+async def admin_broadcast(message: Message):
+    if message.from_user.id != settings.admin_id:
+        return
+    
+    await message.answer(
+        "📢 Xabar yuborish:\n\n"
+        "Yubormoqchi bo'lgan xabaringizni yozing.\n"
+        "Xabar barcha foydalanuvchilarga yuboriladi.\n\n"
+        "❌ Bekor qilish uchun 'bekor' deb yozing."
+    )
+
+@dp.message(F.text == "👥 Foydalanuvchilar")
+async def admin_users_list(message: Message):
+    if message.from_user.id != settings.admin_id:
+        return
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(User).order_by(User.created_at.desc()).limit(10)
+        )
+        users = result.scalars().all()
+
+        if not users:
+            await message.answer("� Foydalanuvchilar yo'q!")
+            return
+
+        text = "� Oxirgi foydalanuvchilar (ID bilan):\n\n"
+        for i, user in enumerate(users, 1):
+            text += f"{i}. {user.first_name} (@{user.username or 'none'})\n"
+            text += f"   🆔 ID: {user.telegram_id}\n"
+            text += f"   💰 Balans: {format_balance(user.balance)} so'm\n"
+            text += f"   👥 Referallar: {user.referral_count} ta\n\n"
+
+        await message.answer(text)
         # Total users
         total_users = await session.scalar(select(func.count(User.id)))
         
@@ -1598,3 +1850,315 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ Xatolik: {e}")
         sys.exit(1)
+
+# Admin broadcast handlers - alohida
+@dp.message(F.from_user.id == settings.admin_id, F.text & ~F.command)
+async def handle_admin_text_broadcast(message: Message):
+    """Admin matn xabarlarini broadcast qilish"""
+    message_text = message.text.strip()
+    
+    if message_text.lower() == 'bekor':
+        await message.answer("❌ Xabar yuborish bekor qilindi.")
+        return
+    
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+            
+            success_count = 0
+            error_count = 0
+            
+            for user in users:
+                try:
+                    await message.bot.send_message(
+                        user.telegram_id,
+                        f"📢 **ADMIN XABARI**\n\n{message_text}"
+                    )
+                    success_count += 1
+                except Exception as e:
+                    print(f"Failed to send broadcast to {user.telegram_id}: {e}")
+                    error_count += 1
+            
+            await message.answer(
+                f"✅ Xabar yuborildi!\n\n"
+                f"📊 Muvaffaqiyatli: {success_count} ta\n"
+                f"❌ Xatolik: {error_count} ta\n"
+                f"👥 Jami: {len(users)} ta foydalanuvchi"
+            )
+            
+    except Exception as e:
+        print(f"Broadcast error: {e}")
+        await message.answer("❌ Xabar yuborishda xatolik yuz berdi!")
+
+@dp.message(F.from_user.id == settings.admin_id, F.photo)
+async def handle_admin_photo_broadcast(message: Message):
+    """Admin rasm xabarlarini broadcast qilish"""
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+            
+            success_count = 0
+            error_count = 0
+            
+            for user in users:
+                try:
+                    await message.bot.send_photo(
+                        user.telegram_id,
+                        message.photo.file_id,
+                        caption=f"📢 **ADMIN XABARI**\n\n{message.caption or ''}"
+                    )
+                    success_count += 1
+                except Exception as e:
+                    print(f"Failed to send photo broadcast to {user.telegram_id}: {e}")
+                    error_count += 1
+            
+            await message.answer(
+                f"✅ Rasm yuborildi!\n\n"
+                f"� Muvaffaqiyatli: {success_count} ta\n"
+                f"❌ Xatolik: {error_count} ta\n"
+                f"👥 Jami: {len(users)} ta foydalanuvchi"
+            )
+            
+    except Exception as e:
+        print(f"Photo broadcast error: {e}")
+        await message.answer("❌ Rasm yuborishda xatolik yuz berdi!")
+
+@dp.message(F.from_user.id == settings.admin_id, F.video)
+async def handle_admin_video_broadcast(message: Message):
+    """Admin video xabarlarini broadcast qilish"""
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+            
+            success_count = 0
+            error_count = 0
+            
+            for user in users:
+                try:
+                    await message.bot.send_video(
+                        user.telegram_id,
+                        message.video.file_id,
+                        caption=f"📢 **ADMIN XABARI**\n\n{message.caption or ''}"
+                    )
+                    success_count += 1
+                except Exception as e:
+                    print(f"Failed to send video broadcast to {user.telegram_id}: {e}")
+                    error_count += 1
+            
+            await message.answer(
+                f"✅ Video yuborildi!\n\n"
+                f"📊 Muvaffaqiyatli: {success_count} ta\n"
+                f"❌ Xatolik: {error_count} ta\n"
+                f"👥 Jami: {len(users)} ta foydalanuvchi"
+            )
+            
+    except Exception as e:
+        print(f"Video broadcast error: {e}")
+        await message.answer("❌ Video yuborishda xatolik yuz berdi!")
+
+@dp.message(F.from_user.id == settings.admin_id, F.sticker)
+async def handle_admin_sticker_broadcast(message: Message):
+    """Admin stiker xabarlarini broadcast qilish"""
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+            
+            success_count = 0
+            error_count = 0
+            
+            for user in users:
+                try:
+                    await message.bot.send_sticker(
+                        user.telegram_id,
+                        message.sticker.file_id
+                    )
+                    success_count += 1
+                except Exception as e:
+                    print(f"Failed to send sticker broadcast to {user.telegram_id}: {e}")
+                    error_count += 1
+            
+            await message.answer(
+                f"✅ Stiker yuborildi!\n\n"
+                f"📊 Muvaffaqiyatli: {success_count} ta\n"
+                f"❌ Xatolik: {error_count} ta\n"
+                f"👥 Jami: {len(users)} ta foydalanuvchi"
+            )
+            
+    except Exception as e:
+        print(f"Sticker broadcast error: {e}")
+        await message.answer("❌ Stiker yuborishda xatolik yuz berdi!")
+
+# ==================== MAIN ====================
+async def main():
+    await init_db()
+    bot = Bot(token=settings.bot_token)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("🛑 Bot to'xtatildi")
+    except Exception as e:
+        print(f"❌ Xatolik: {e}")
+        sys.exit(1)
+
+@dp.message(F.text == "🔐 Majburiy obuna")
+async def manage_subscription_channels(message: Message):
+    """Majburiy obuna kanallarini boshqarish"""
+    if message.from_user.id != settings.admin_id:
+        await message.answer("❌ Bu komanda faqat admin uchun!")
+        return
+    
+    try:
+        current_channels = channel_manager.get_channels()
+        
+        if not current_channels:
+            # Kanal qo'shish rejimi
+            await message.answer(
+                "🔐 **Majburiy obuna kanali qo'shish:**\n\n"
+                "📋 Kanal qo'shish uchun quyidagi formatlarda yuboring:\n"
+                "```\n@channel_username\nhttps://t.me/channel_username\nt.me/channel_username\n```\n\n"
+                "❌ Bekor qilish uchun 'bekor' deb yozing.\n\n"
+                "📌 Eslatma: Faqat 1 ta majburiy kanal qo'shish mumkin!",
+                parse_mode="Markdown"
+            )
+            return
+        
+        # Kanalni o'chirish yoki ko'rish
+        channel_info = current_channels[0]
+        
+        # Kanal ma'lumotlarini escape qilish
+        safe_id = channel_info['id'].replace('_', '\\_')
+        safe_name = channel_info['name'].replace('_', '\\_')
+        
+        channel_text = f"📢 **Joriy majburiy kanal:**\n\n"
+        channel_text += f"🔗 Kanal: @{safe_id}\n"
+        channel_text += f"📝 Nomi: {safe_name}\n"
+        channel_text += f"📅 Qo'shilgan sana: {channel_info['added_date'][:10]}\n\n"
+        channel_text += "🗑️ **Kanalni o'chirish uchun:**\n"
+        channel_text += "`ochirish` deb yozing\n\n"
+        channel_text += "❌ **Bekor qilish uchun:**\n"
+        channel_text += "`bekor` deb yozing"
+        
+        await message.answer(channel_text, parse_mode="Markdown")
+        
+    except Exception as e:
+        print(f"Majburiy obuna menuni ochishda xatolik: {e}")
+        await message.answer(
+            "❌ Majburiy obuna menuni ochishda xatolik yuz berdi!\n"
+            "🔄 Qaytadan urinib ko'ring.\n\n"
+            "👨‍💻 Admin @shohjahon_o5"
+        )
+
+@dp.message(F.text & ~F.command)
+async def handle_subscription_management(message: Message):
+    """Majburiy obuna kanallarini boshqarish - xabarlar qayta ishlash"""
+    if message.from_user.id != settings.admin_id:
+        return
+    
+    message_text = message.text.strip()
+    
+    # Faqat kanal formatlarini tekshirish
+    if not (message_text.startswith('@') or 
+            message_text.startswith('https://t.me/') or 
+            message_text.startswith('t.me/') or
+            message_text.lower() in ['bekor', 'ochirish']):
+        return
+    
+    if message_text.lower() == 'bekor':
+        await message.answer(
+            "❌ Majburiy obuna boshqaruvi bekor qilindi.\n\n"
+            "🔙 Admin menyuga qaytish uchun '👥 Foydalanuvchilar' tugmasini bosing.",
+            reply_markup=admin_menu()
+        )
+        return
+    
+    current_channels = channel_manager.get_channels()
+    
+    if not current_channels:
+        # Yangi kanal qo'shish - faqat @username yoki https://t.me/ linklar
+        channel_input = message_text.strip()
+        
+        # Validatsiya - faqat @username yoki https://t.me/ formatlar
+        is_valid = False
+        channel_id = channel_input
+        
+        if channel_input.startswith('@'):
+            # @username format
+            if len(channel_input) > 1 and channel_input[1:].replace('_', '').replace('-', '').isalnum():
+                is_valid = True
+                channel_id = channel_input
+        elif channel_input.startswith('https://t.me/'):
+            # https://t.me/username format
+            username = channel_input.replace('https://t.me/', '').replace('/', '')
+            if username and username.replace('_', '').replace('-', '').isalnum():
+                is_valid = True
+                channel_id = '@' + username
+        elif channel_input.startswith('t.me/'):
+            # t.me/username format
+            username = channel_input.replace('t.me/', '').replace('/', '')
+            if username and username.replace('_', '').replace('-', '').isalnum():
+                is_valid = True
+                channel_id = '@' + username
+        
+        if not is_valid:
+            await message.answer(
+                "❌ Noto'g'ri kanal formati!\n\n"
+                "📋 **To'g'ri formatlar:**\n"
+                "• `@channel_username`\n"
+                "• `https://t.me/channel_username`\n"
+                "• `t.me/channel_username`\n\n"
+                "🔄 Qaytadan urinib ko'ring yoki 'bekor' deb yozing."
+            )
+            return
+        
+        # Kanalni qo'shish
+        if channel_manager.add_channel(channel_id, channel_id):
+            safe_channel_id = channel_id.replace('_', '\\_')
+            await message.answer(
+                f"✅ Majburiy obuna kanali muvaffaqiyatli qo'shildi!\n\n"
+                f"📢 Kanal: {safe_channel_id}\n\n"
+                f"🔐 Endi foydalanuvchilar shu kanalga obuna bo'lishi shart.\n\n"
+                f"🔙 Admin menyuga qaytish uchun '👥 Foydalanuvchilar' tugmasini bosing.",
+                reply_markup=admin_menu()
+            )
+        else:
+            await message.answer(
+                f"❌ Kanalni qo'shishda xatolik yuz berdi!\n\n"
+                f"📋 Ehtimol sabablar:\n"
+                f"• Kanal allaqachon qo'shilgan\n"
+                f"• Bot kanalda admin emas\n\n"
+                f"🔄 Qaytadan urinib ko'ring yoki 'bekor' deb yozing."
+            )
+    else:
+        # Kanalni o'chirish
+        if message_text.lower() == 'ochirish':
+            channel_info = current_channels[0]
+            if channel_manager.remove_channel(channel_info['id']):
+                safe_id = channel_info['id'].replace('_', '\\_')
+                await message.answer(
+                    f"✅ Majburiy obuna kanali o'chirildi!\n\n"
+                    f"📢 O'chirilgan kanal: @{safe_id}\n\n"
+                    f"🔐 Endi majburiy obuna talabi yo'q.\n\n"
+                    f"🔙 Admin menyuga qaytish uchun '👥 Foydalanuvchilar' tugmasini bosing.",
+                    reply_markup=admin_menu()
+                )
+            else:
+                await message.answer(
+                    "❌ Kanalni o'chirishda xatolik yuz berdi!\n\n"
+                    "🔄 Qaytadan urinib ko'ring."
+                )
+        else:
+            await message.answer(
+                "❌ Noto'g'ri buyruq!\n\n"
+                "📋 Mavjud buyruqlar:\n"
+                "• `ochirish` - kanalni o'chirish\n"
+                "• `bekor` - bekor qilish\n\n"
+                "🔄 Qaytadan urinib ko'ring."
+            )
