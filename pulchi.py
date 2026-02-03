@@ -22,14 +22,14 @@ import aiohttp
 
 # ==================== CONFIG ====================
 class Config(BaseSettings):
-    bot_token: str
-    admin_id: int
-    admin_username: str
+    bot_token: str = "8568085508:AAGC5687wLPiiaSN6RZO8uwk0D3sBWEYszU"
+    admin_id: int = 422057508
+    admin_username: str = "shohjahon_o5"
     database_url: str = "sqlite+aiosqlite:///bot.db"
     referral_reward: int = 500
     minimum_withdrawal: int = 15000
-    sponsor_channels: str = ""  # Comma-separated channel IDs
-    is_railway: bool = False  # Railway deployment flag
+    sponsor_channels: str = "@shohjahon_shahriyev"  # Comma-separated channel IDs
+    is_railway: bool = True  # Railway deployment flag
     payme_token: str = ""
     click_token: str = ""
 
@@ -43,6 +43,31 @@ class Config(BaseSettings):
         env_file = ".env"
 
 settings = Config()
+
+# Validate required settings
+if not settings.bot_token:
+    print("❌ BOT_TOKEN is required!")
+    print("Please set BOT_TOKEN in Railway environment variables")
+    sys.exit(1)
+
+if not settings.admin_id:
+    print("❌ ADMIN_ID is required!")
+    print("Please set ADMIN_ID in Railway environment variables")
+    sys.exit(1)
+
+if not settings.admin_username:
+    print("❌ ADMIN_USERNAME is required!")
+    print("Please set ADMIN_USERNAME in Railway environment variables")
+    sys.exit(1)
+
+# Railway specific checks
+if settings.is_railway:
+    print("🚀 Running on Railway platform")
+    print(f"🤖 Bot configured for admin: {settings.admin_username}")
+    print(f"📺 Sponsor channels: {len(settings.sponsor_channels_list)}")
+    print("✅ Configuration validated for Railway")
+else:
+    print("🏠 Running in local mode")
 
 # ==================== DATABASE ====================
 engine = create_async_engine(settings.database_url)
